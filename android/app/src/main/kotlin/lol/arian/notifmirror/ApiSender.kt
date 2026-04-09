@@ -14,11 +14,12 @@ import java.util.Locale
 object ApiSender {
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
 
-    fun send(context: Context, from: String, body: String, whenMs: Long) {
+    fun send(context: Context, from: String, body: String, whenMs: Long, mirrorBody: String? = null) {
         val prefs = context.getSharedPreferences("msg_mirror", Context.MODE_PRIVATE)
         val endpoint = prefs.getString("endpoint", "") ?: ""
         val template = prefs.getString("payload_template", "") ?: ""
-        if (endpoint.isEmpty() || body.isEmpty()) {
+        val bodyOut = if (!mirrorBody.isNullOrBlank()) mirrorBody else body
+        if (endpoint.isEmpty() || bodyOut.isEmpty()) {
             try { LogStore.append(context, "ApiSender skip: endpoint/body empty") } catch (_: Exception) {}
             return
         }
@@ -26,7 +27,7 @@ object ApiSender {
         val payload = try {
             if (template.isNotBlank()) {
                 val rendered = template
-                    .replace("{{body}}", escape(body))
+                    .replace("{{body}}", escape(bodyOut))
                     .replace("{{from}}", escape(from))
                     .replace("{{date}}", escape(dateStr))
                     .replace("{{app}}", escape("notification"))
@@ -35,14 +36,14 @@ object ApiSender {
                 JSONObject(rendered)
             } else {
                 JSONObject()
-                    .put("message_body", body)
+                    .put("message_body", bodyOut)
                     .put("message_from", from)
                     .put("message_date", dateStr)
                     .put("type", "notification")
             }
         } catch (e: Exception) {
             JSONObject()
-                .put("message_body", body)
+                .put("message_body", bodyOut)
                 .put("message_from", from)
                 .put("message_date", dateStr)
                 .put("type", "notification")
@@ -50,7 +51,7 @@ object ApiSender {
 
         Thread {
             try {
-                LogStore.append(context, "ApiSender POST → $endpoint from='$from' len=${body.length}")
+                LogStore.append(context, "ApiSender POST → $endpoint from='$from' len=${bodyOut.length}")
                 val url = URL(endpoint)
                 val conn = (url.openConnection() as HttpURLConnection).apply {
                     requestMethod = "POST"

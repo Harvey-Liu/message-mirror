@@ -106,6 +106,7 @@ class MessageStream {
     final String app = (m['app'] ?? '').toString();
     final String title = (m['title'] ?? '').toString();
     final String text = (m['text'] ?? '').toString().trim();
+    final String mirrorText = (m['mirror_text'] ?? '').toString().trim();
     final bool isGroupSummary = (m['isGroupSummary'] ?? false) == true;
     final int whenMs = (m['when'] is int) ? (m['when'] as int) : 0;
     final String subText = (m['subText'] ?? '').toString();
@@ -142,7 +143,10 @@ class MessageStream {
       Logger.d('Skip group summary');
       return null;
     }
-    final String body = text.isNotEmpty ? text : title;
+    // 发往手表：若有格式化验证码则用语义展开后的 mirror_text，手机端仍只保留各应用原始通知
+    final String body = mirrorText.isNotEmpty
+        ? mirrorText
+        : (text.isNotEmpty ? text : title);
     if (body.isEmpty) {
       Logger.d('Skip notification with empty body');
       return null;
@@ -156,6 +160,7 @@ class MessageStream {
     final extraValues = <String, String>{
       'title': title,
       'text': text,
+      if (mirrorText.isNotEmpty) 'mirror_text': mirrorText,
       'when': whenMs.toString(),
       'isGroupSummary': isGroupSummary.toString(),
       'subText': subText,

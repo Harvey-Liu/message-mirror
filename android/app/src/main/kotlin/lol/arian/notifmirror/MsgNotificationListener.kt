@@ -2,12 +2,9 @@ package lol.arian.notifmirror
 
 import android.os.Bundle
 import android.app.Notification
-import android.app.NotificationManager
-import android.app.NotificationChannel
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.content.Intent
-import android.content.Context
 import io.flutter.plugin.common.MethodChannel
 
 class MsgNotificationListener : NotificationListenerService() {
@@ -29,29 +26,6 @@ class MsgNotificationListener : NotificationListenerService() {
                 pendingEvents.clear()
             }
         }
-    }
-
-
-    private fun sendSafeNotification(title: String, content: String) {
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val channelId = "safe_channel"
-
-        if (android.os.Build.VERSION.SDK_INT >= 26) {
-            val channel = NotificationChannel(
-                channelId,
-                "SafeCode",
-                NotificationManager.IMPORTANCE_HIGH
-            )
-            manager.createNotificationChannel(channel)
-        }
-
-        val notification = Notification.Builder(this, channelId)
-            .setContentTitle(title)
-            .setContentText(content)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .build()
-
-        manager.notify(System.currentTimeMillis().toInt(), notification)
     }
 
     private fun extractVerifyCode(text: String): String? {
@@ -166,38 +140,24 @@ class MsgNotificationListener : NotificationListenerService() {
 
         try { LogStore.append(this, "emit onNotification: title='$title' textLen=${textResolved.length}") } catch (_: Exception) {}
 
-        // ================== 新增逻辑 ==================
+        // 提取验证码：仅通过转发链路（广播 / Channel / ApiSender）附带 mirror_text，不在本机再 notify，避免第二条通知
+        var mirrorText: String? = null
         try {
             val code = extractVerifyCode(textResolved)
-
             if (code != null) {
-
-                // 去重（5秒内相同验证码不再发送）
                 val lastCode = prefs.getString("last_code", "") ?: ""
                 val lastTime = prefs.getLong("last_time", 0L)
                 val now = System.currentTimeMillis()
-
                 if (!(code == lastCode && now - lastTime < 2000)) {
-
-                    // 保存状态
                     prefs.edit()
                         .putString("last_code", code)
                         .putLong("last_time", now)
                         .apply()
-
-                    // 变形（绕过系统敏感检测）
-                    val safeCode = formatSafeCode(code)
-
-                    // 发通知（手表能看到）
-                    val displayTitle = if (title.isNotEmpty()) title else app
-                    sendSafeNotification(displayTitle, safeCode)
-
-                    try { LogStore.append(this, "safe notify: $safeCode") } catch (_: Exception) {}
+                    mirrorText = formatSafeCode(code)
+                    try { LogStore.append(this, "mirror_text for watch: $mirrorText") } catch (_: Exception) {}
                 }
             }
         } catch (_: Exception) {}
-
-        // ================== 新增逻辑结束 ==================
 
         val intent = Intent(ACTION).apply {
             putExtra("app", app)
@@ -220,23 +180,25 @@ class MsgNotificationListener : NotificationListenerService() {
             putExtra("actions", actionTitles)
             putExtra("largeIcon", largeIconB64)
             putExtra("picture", pictureB64)
+            if (!mirrorText.isNullOrEmpty()) putExtra("mirror_text", mirrorText)
         }
 
         sendBroadcast(intent)
 
-        val payload: Map<String, Any?> = mapOf(
+        val payload = mutableMapOf<String, Any?>(
             "app" to app,
             "title" to title,
             "text" to textResolved,
             "when" to sbn.postTime
         )
+        if (!mirrorText.isNullOrEmpty()) payload["mirror_text"] = mirrorText
 
         val ch = channel
         if (ch != null) {
             ch.invokeMethod("onNotification", payload)
         } else {
             synchronized(pendingEvents) { pendingEvents.add(payload) }
-            ApiSender.send(this, title, textResolved, sbn.postTime)
+            ApiSender.send(this, title, textResolved, sbn.postTime, mirrorText)
         }
     }
 

@@ -29,7 +29,8 @@ class NotifEventReceiver : BroadcastReceiver() {
             "badgeIconType" to intent.getIntExtra("badgeIconType", -1),
             "actions" to (intent.getStringExtra("actions") ?: ""),
             "largeIcon" to (intent.getStringExtra("largeIcon") ?: ""),
-            "picture" to (intent.getStringExtra("picture") ?: "")
+            "picture" to (intent.getStringExtra("picture") ?: ""),
+            "mirror_text" to (intent.getStringExtra("mirror_text") ?: "")
         )
         try { LogStore.append(context, "NotifEventReceiver -> ${data["title"]}") } catch (_: Exception) {}
 
