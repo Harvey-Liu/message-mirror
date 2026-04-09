@@ -8,12 +8,15 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # 强制所有 JS Actions 使用 Node.js 24
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Flutter 环境（你的项目是 Flutter）
+      # Flutter 环境
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -22,12 +25,21 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Build APK
-        run: flutter build apk --release
+      - name: Accept Android licenses
+        run: yes | flutter doctor --android-licenses
 
-      # 上传 APK
+      - name: Build APK
+        run: flutter build apk --release --build-name=1.0.0 --build-number=1
+
+      # 重命名 APK
+      - name: Rename APK
+        run: |
+          mkdir -p build/app/outputs/flutter-apk/final
+          mv build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/final/WatchMsg.apk
+
+      # 上传 APK 并固定名字
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: WatchMsg
-          path: build/app/outputs/flutter-apk/WatchMsg.apk
+          path: build/app/outputs/flutter-apk/final/WatchMsg.apk
