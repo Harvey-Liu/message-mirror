@@ -20,10 +20,11 @@ jobs:
           node-version: '24'
 
       # 安装 Flutter
+      # 须与 pubspec environment.sdk（^3.9.0）一致：Flutter 3.22 仅含 Dart 3.4，会导致 pub get 失败
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.22.0'
+          flutter-version: '3.41.6'
 
       # 安装依赖
       - name: Install dependencies
