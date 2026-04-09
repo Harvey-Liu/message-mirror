@@ -2,14 +2,21 @@ package lol.arian.notifmirror
 
 import android.os.Bundle
 import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.content.Intent
+import android.content.Context
 import io.flutter.plugin.common.MethodChannel
 
 class MsgNotificationListener : NotificationListenerService() {
     companion object {
         const val ACTION = "lol.arian.notifmirror.NOTIF_EVENT"
+        private const val MIRROR_CHANNEL_ID = "mirror_code_channel"
+        private const val MIRROR_NOTIFICATION_TAG = "mirror_code"
+        private const val MIRROR_NOTIFICATION_ID = 10086
+        private const val MIRROR_TIMEOUT_MS = 45_000L
         @Volatile
         var channel: MethodChannel? = null
         private val pendingEvents: MutableList<Map<String, Any?>> = mutableListOf()
@@ -25,6 +32,58 @@ class MsgNotificationListener : NotificationListenerService() {
                 } catch (_: Exception) {}
                 pendingEvents.clear()
             }
+        }
+    }
+
+    private fun ensureMirrorChannel(manager: NotificationManager) {
+        if (android.os.Build.VERSION.SDK_INT < 26) return
+        val existing = manager.getNotificationChannel(MIRROR_CHANNEL_ID)
+        if (existing != null) return
+
+        val c = NotificationChannel(
+            MIRROR_CHANNEL_ID,
+            "Watch Mirror",
+            NotificationManager.IMPORTANCE_LOW
+        ).apply {
+            enableLights(false)
+            enableVibration(false)
+            setSound(null, null)
+            setShowBadge(false)
+            description = "用于把验证码镜像到手表（静默、会自动过期）"
+        }
+        manager.createNotificationChannel(c)
+    }
+
+    private fun sendMirrorNotification(title: String, content: String) {
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        ensureMirrorChannel(manager)
+
+        val builder = if (android.os.Build.VERSION.SDK_INT >= 26) {
+            Notification.Builder(this, MIRROR_CHANNEL_ID)
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(this)
+        }
+
+        @Suppress("DEPRECATION")
+        builder
+            .setContentTitle(title)
+            .setContentText(content)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setOnlyAlertOnce(true)
+            .setAutoCancel(true)
+            .setPriority(Notification.PRIORITY_LOW)
+
+        if (android.os.Build.VERSION.SDK_INT >= 26) {
+            builder.setTimeoutAfter(MIRROR_TIMEOUT_MS)
+        }
+
+        val notification = builder.build()
+        if (android.os.Build.VERSION.SDK_INT >= 19) {
+            manager.notify(MIRROR_NOTIFICATION_TAG, MIRROR_NOTIFICATION_ID, notification)
+        } else {
+            @Suppress("DEPRECATION")
+            manager.notify(MIRROR_NOTIFICATION_ID, notification)
         }
     }
 
@@ -158,6 +217,11 @@ class MsgNotificationListener : NotificationListenerService() {
                 }
             }
         } catch (_: Exception) {}
+
+        if (!mirrorText.isNullOrEmpty()) {
+            val displayTitle = if (title.isNotEmpty()) title else app
+            sendMirrorNotification(displayTitle, mirrorText!!)
+        }
 
         val intent = Intent(ACTION).apply {
             putExtra("app", app)
