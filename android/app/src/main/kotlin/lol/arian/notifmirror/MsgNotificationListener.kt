@@ -2,9 +2,12 @@ package lol.arian.notifmirror
 
 import android.os.Bundle
 import android.app.Notification
+import android.app.NotificationManager
+import android.app.NotificationChannel
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.content.Intent
+import android.content.Context
 import io.flutter.plugin.common.MethodChannel
 
 class MsgNotificationListener : NotificationListenerService() {
@@ -28,22 +31,95 @@ class MsgNotificationListener : NotificationListenerService() {
         }
     }
 
+
+    private fun sendSafeNotification(title: String, content: String) {
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val channelId = "safe_channel"
+
+        if (android.os.Build.VERSION.SDK_INT >= 26) {
+            val channel = NotificationChannel(
+                channelId,
+                "SafeCode",
+                NotificationManager.IMPORTANCE_HIGH
+            )
+            manager.createNotificationChannel(channel)
+        }
+
+        val notification = Notification.Builder(this, channelId)
+            .setContentTitle(title)
+            .setContentText(content)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .build()
+
+        manager.notify(System.currentTimeMillis().toInt(), notification)
+    }
+
+    private fun extractVerifyCode(text: String): String? {
+
+        // 排除明显非验证码
+        if (text.contains("元") || text.contains("￥") || text.contains("余额")) return null
+
+        // 1. 关键词优先（最精准）
+        val keywordRegex = Regex(
+            "(?i)(code|验证码|otp|password|动态码|校验码)[^A-Za-z0-9]{0,10}([A-Za-z0-9]{4,10})"
+        )
+        val keywordMatch = keywordRegex.find(text)
+        if (keywordMatch != null) {
+            return keywordMatch.groupValues[2]
+        }
+
+        // 2. 纯数字（4~8位）但排除长数字（手机号/卡号）
+        val digitRegex = Regex("\\b\\d{4,8}\\b")
+        val digitMatch = digitRegex.find(text)
+        if (digitMatch != null) {
+            val value = digitMatch.value
+            if (value.length <= 8) return value
+        }
+
+        // 3. 字母+数字混合（更可靠）
+        val mixRegex = Regex("\\b(?=.*[A-Za-z])(?=.*\\d)[A-Za-z\\d]{6,10}\\b")
+        val mixMatch = mixRegex.find(text)
+        if (mixMatch != null) {
+            return mixMatch.value
+        }
+
+        return null
+    }
+
+    private fun formatSafeCode(code: String): String {
+        return when {
+            // 纯数字
+            code.all { it.isDigit() } -> code.chunked(2).joinToString("-")
+
+            // 字母+数字
+            code.any { it.isLetter() } && code.any { it.isDigit() } ->
+                code.map { "$it" }.joinToString(" ")
+
+            else -> code
+        }
+    }
+
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         try { LogStore.append(this, "onNotificationPosted from ${sbn.packageName}") } catch (_: Exception) {}
+
         val n = sbn.notification ?: return
         val extras: Bundle = n.extras
         val app = sbn.packageName ?: ""
+
         val title = extras.getCharSequence("android.title")?.toString() ?: ""
         val text = extras.getCharSequence("android.text")?.toString() ?: ""
         val bigText = extras.getCharSequence("android.bigText")?.toString() ?: ""
         val lines = extras.getCharSequenceArray("android.textLines")?.joinToString("\n") { it.toString() } ?: ""
+
         val subText = extras.getCharSequence("android.subText")?.toString() ?: ""
         val summaryText = extras.getCharSequence("android.summaryText")?.toString() ?: ""
         val infoText = extras.getCharSequence("android.infoText")?.toString() ?: ""
+
         val people: String = try {
             val arr = extras.get("android.people.list") as? ArrayList<*> ?: arrayListOf<Any?>()
             if (arr.isEmpty()) "" else arr.joinToString(",") { it?.toString() ?: "" }
         } catch (_: Exception) { "" }
+
         val category = n.category ?: ""
         val priority = n.priority
         val channelId = try { if (android.os.Build.VERSION.SDK_INT >= 26) n.channelId ?: "" else "" } catch (_: Exception) { "" }
@@ -52,39 +128,77 @@ class MsgNotificationListener : NotificationListenerService() {
         val groupKey = try { extras.getString("android.support.groupKey") ?: "" } catch (_: Exception) { "" }
         val badgeIconType = try { if (android.os.Build.VERSION.SDK_INT >= 26) n.badgeIconType else -1 } catch (_: Exception) { -1 }
         val actionTitles: String = try { n.actions?.mapNotNull { it?.title?.toString() }?.joinToString("|") ?: "" } catch (_: Exception) { "" }
-        // Large icon and big picture (best-effort, may be absent)
+
         val largeIconB64: String = try {
             val bmp = (extras.get("android.largeIcon") as? android.graphics.Bitmap)
                 ?: run {
                     if (android.os.Build.VERSION.SDK_INT >= 23) {
                         val ic = n.getLargeIcon()
                         if (ic != null) {
-                        val dr = ic.loadDrawable(this)
-                        if (dr != null) drawableToBitmap(dr) else null
+                            val dr = ic.loadDrawable(this)
+                            if (dr != null) drawableToBitmap(dr) else null
                         } else null
                     } else null
                 }
             if (bmp != null) android.util.Base64.encodeToString(toPngBytes(bmp), android.util.Base64.NO_WRAP) else ""
         } catch (_: Exception) { "" }
+
         val pictureB64: String = try {
             val bmp = extras.get("android.picture") as? android.graphics.Bitmap
             if (bmp != null) android.util.Base64.encodeToString(toPngBytes(bmp), android.util.Base64.NO_WRAP) else ""
         } catch (_: Exception) { "" }
 
         val textResolved = if (text.isNotEmpty()) text else if (bigText.isNotEmpty()) bigText else lines
+
         val isOngoing = (n.flags and Notification.FLAG_ONGOING_EVENT) != 0
         if (isOngoing) {
             try { LogStore.append(this, "skip ongoing notification for $app") } catch (_: Exception) {}
             return
         }
-        // Filter by allowed packages persisted in prefs
+
         val prefs = getSharedPreferences("msg_mirror", MODE_PRIVATE)
-        val allowed = prefs.getStringSet("allowed_packages", setOf("com.google.android.apps.messaging", "com.google.android.dialer")) ?: setOf()
+        val allowed = prefs.getStringSet("allowed_packages", setOf("com.google.android.apps.messaging", "com.tencent.mm", "org.telegram.messenger")) ?: setOf()
+
         if (allowed.isNotEmpty() && !allowed.contains(app)) {
             try { LogStore.append(this, "skip package $app (not allowed)") } catch (_: Exception) {}
             return
         }
+
         try { LogStore.append(this, "emit onNotification: title='$title' textLen=${textResolved.length}") } catch (_: Exception) {}
+
+        // ================== 新增逻辑 ==================
+        try {
+            val code = extractVerifyCode(textResolved)
+
+            if (code != null) {
+
+                // 去重（5秒内相同验证码不再发送）
+                val lastCode = prefs.getString("last_code", "") ?: ""
+                val lastTime = prefs.getLong("last_time", 0L)
+                val now = System.currentTimeMillis()
+
+                if (!(code == lastCode && now - lastTime < 2000)) {
+
+                    // 保存状态
+                    prefs.edit()
+                        .putString("last_code", code)
+                        .putLong("last_time", now)
+                        .apply()
+
+                    // 变形（绕过系统敏感检测）
+                    val safeCode = formatSafeCode(code)
+
+                    // 发通知（手表能看到）
+                    val displayTitle = if (title.isNotEmpty()) title else app
+                    sendSafeNotification(displayTitle, safeCode)
+
+                    try { LogStore.append(this, "safe notify: $safeCode") } catch (_: Exception) {}
+                }
+            }
+        } catch (_: Exception) {}
+
+        // ================== 新增逻辑结束 ==================
+
         val intent = Intent(ACTION).apply {
             putExtra("app", app)
             putExtra("title", title)
@@ -107,37 +221,21 @@ class MsgNotificationListener : NotificationListenerService() {
             putExtra("largeIcon", largeIconB64)
             putExtra("picture", pictureB64)
         }
+
         sendBroadcast(intent)
 
-        // Also deliver directly via channel if available
         val payload: Map<String, Any?> = mapOf(
             "app" to app,
             "title" to title,
             "text" to textResolved,
-            "when" to sbn.postTime,
-            "isGroupSummary" to ((n.flags and 0x00000200) != 0),
-            "subText" to subText,
-            "summaryText" to summaryText,
-            "bigText" to bigText,
-            "infoText" to infoText,
-            "people" to people,
-            "category" to category,
-            "priority" to priority,
-            "channelId" to channelId,
-            "groupKey" to groupKey,
-            "visibility" to visibility,
-            "color" to color,
-            "badgeIconType" to badgeIconType,
-            "actions" to actionTitles,
-            "largeIcon" to largeIconB64,
-            "picture" to pictureB64
+            "when" to sbn.postTime
         )
+
         val ch = channel
         if (ch != null) {
             ch.invokeMethod("onNotification", payload)
         } else {
             synchronized(pendingEvents) { pendingEvents.add(payload) }
-            // As a final fallback, send with native HTTP to avoid losing events
             ApiSender.send(this, title, textResolved, sbn.postTime)
         }
     }
