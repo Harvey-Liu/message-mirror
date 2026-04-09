@@ -8,48 +8,44 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      # 强制所有 JS Actions 使用 Node.js 24
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
-      # 1️设置 Node.js 24
+      # 使用声明 Node 24 运行时的 action，避免 Node 20 弃用警告（勿再设置 FORCE_JAVASCRIPT_ACTIONS_TO_NODE24）
+      - name: Checkout
+        uses: actions/checkout@v6
+
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v6
         with:
           node-version: '24'
 
-      # 2️拉取代码
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      # 3️安装 Flutter
+      # 安装 Flutter
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.22.0'
 
-      # 4️安装依赖
+      # 安装依赖
       - name: Install dependencies
         run: flutter pub get
 
-      # 5️接受 Android SDK license
+      # 接受 Android SDK license
       - name: Accept Android licenses
         run: yes | flutter doctor --android-licenses
 
-      # 6️构建 Release APK
+      # 构建 Release APK
       - name: Build APK
         id: build_apk
         run: flutter build apk --release --build-name=1.0.0 --build-number=1
 
-      # 7️重命名 APK 并导出路径
+      # 重命名 APK 并导出路径
       - name: Rename APK
         run: |
           mkdir -p build/app/outputs/flutter-apk/final
           mv build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/final/WatchMsg.apk
           echo "APK_PATH=build/app/outputs/flutter-apk/final/WatchMsg.apk" >> $GITHUB_ENV
 
-      # 8️上传 APK Artifact
+      # 上传 APK Artifact
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
