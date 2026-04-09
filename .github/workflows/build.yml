@@ -13,33 +13,45 @@ jobs:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      # 1️设置 Node.js 24
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '24'
 
-      # Flutter 环境
+      # 2️拉取代码
+      - name: Checkout
+        uses: actions/checkout@v4.2.0
+
+      # 3️安装 Flutter
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.22.0'
 
+      # 4️安装依赖
       - name: Install dependencies
         run: flutter pub get
 
+      # 5️接受 Android SDK license
       - name: Accept Android licenses
         run: yes | flutter doctor --android-licenses
 
+      # 6️构建 Release APK
       - name: Build APK
+        id: build_apk
         run: flutter build apk --release --build-name=1.0.0 --build-number=1
 
-      # 重命名 APK
+      # 7️重命名 APK 并导出路径
       - name: Rename APK
         run: |
           mkdir -p build/app/outputs/flutter-apk/final
           mv build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/final/WatchMsg.apk
+          echo "APK_PATH=build/app/outputs/flutter-apk/final/WatchMsg.apk" >> $GITHUB_ENV
 
-      # 上传 APK 并固定名字
+      # 8️上传 APK Artifact
       - name: Upload APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.1.2
         with:
           name: WatchMsg
-          path: build/app/outputs/flutter-apk/final/WatchMsg.apk
+          path: ${{ env.APK_PATH }}
