@@ -21,7 +21,7 @@ jobs:
 
       # 2️拉取代码
       - name: Checkout
-        uses: actions/checkout@v4.2.0
+        uses: actions/checkout@v4
 
       # 3️安装 Flutter
       - name: Setup Flutter
@@ -51,7 +51,7 @@ jobs:
 
       # 8️上传 APK Artifact
       - name: Upload APK
-        uses: actions/upload-artifact@v4.1.2
+        uses: actions/upload-artifact@v4
         with:
           name: WatchMsg
           path: ${{ env.APK_PATH }}
