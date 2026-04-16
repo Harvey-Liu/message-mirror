@@ -171,16 +171,19 @@ class AlwaysOnService : Service() {
         // Optional: register SMS observer if permission granted
         // reuse prefs declared above
         val smsEnabled = prefs.getBoolean("sms_enabled", true)
-        if (smsEnabled && checkSelfPermission(Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED) {
+        val hasSmsPermission = checkSelfPermission(Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED
+        LogStore.append(this, "SMS setup check: enabled=$smsEnabled, hasPermission=$hasSmsPermission")
+        
+        if (smsEnabled && hasSmsPermission) {
             smsObserver = SmsObserver(this, channel)
             contentResolver.registerContentObserver(
                 Telephony.Sms.Inbox.CONTENT_URI,
                 true,
                 smsObserver as SmsObserver
             )
-            LogStore.append(this, "SmsObserver registered")
+            LogStore.append(this, "SmsObserver registered successfully")
         } else {
-            LogStore.append(this, "SmsObserver not registered (enabled=$smsEnabled, hasPerm=${checkSelfPermission(Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED})")
+            LogStore.append(this, "SmsObserver not registered (enabled=$smsEnabled, hasPerm=$hasSmsPermission)")
         }
     }
 
@@ -209,7 +212,10 @@ class AlwaysOnService : Service() {
 
     private fun toggleSmsObserver(enable: Boolean) {
         if (enable) {
-            if (checkSelfPermission(Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED) {
+            val hasPerm = checkSelfPermission(Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED
+            LogStore.append(this, "toggleSmsObserver: enable=true, hasPermission=$hasPerm, alreadyRegistered=${smsObserver != null}")
+            
+            if (hasPerm) {
                 if (smsObserver == null) {
                     val ch = msgChannel
                     if (ch != null) {
@@ -223,11 +229,14 @@ class AlwaysOnService : Service() {
                     } else {
                         LogStore.append(this, "SmsObserver toggle failed: no channel")
                     }
+                } else {
+                    LogStore.append(this, "SmsObserver already registered, skipping")
                 }
             } else {
                 LogStore.append(this, "SmsObserver toggle skipped: no permission")
             }
         } else {
+            LogStore.append(this, "toggleSmsObserver: enable=false, wasRegistered=${smsObserver != null}")
             smsObserver?.let {
                 try { contentResolver.unregisterContentObserver(it) } catch (_: Exception) {}
             }

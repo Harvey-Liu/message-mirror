@@ -12,21 +12,49 @@ class SmsObserver(
 ) : ContentObserver(Handler(ctx.mainLooper)) {
     companion object {
         private const val SMS_MIRROR_DEDUP_MS = 2000L
+        private var lastProcessedDate: Long = 0
     }
 
+    // 兼容旧版本 Android
+    override fun onChange(selfChange: Boolean) {
+        super.onChange(selfChange)
+        onChangeImpl(null)
+    }
+
+    // 新版本 Android 会调用这个
     override fun onChange(selfChange: Boolean, uri: Uri?) {
+        super.onChange(selfChange, uri)
+        onChangeImpl(uri)
+    }
+
+    private fun onChangeImpl(uri: Uri?) {
         try { LogStore.append(ctx, "SmsObserver onChange uri=${uri?.toString()}") } catch (_: Exception) {}
+        
         val cursor = ctx.contentResolver.query(
             Telephony.Sms.Inbox.CONTENT_URI,
             arrayOf(Telephony.Sms.ADDRESS, Telephony.Sms.BODY, Telephony.Sms.DATE),
-            null, null, Telephony.Sms.DEFAULT_SORT_ORDER
-        ) ?: return
+            null, null, "${Telephony.Sms.DATE} DESC"
+        )
+        
+        if (cursor == null) {
+            try { LogStore.append(ctx, "SmsObserver query returned null cursor") } catch (_: Exception) {}
+            return
+        }
 
         cursor.use {
             if (it.moveToFirst()) {
                 val from = it.getString(0) ?: ""
                 val body = it.getString(1) ?: ""
                 val date = it.getLong(2)
+                
+                // 防止重复处理同一条短信
+                if (date == lastProcessedDate) {
+                    try { LogStore.append(ctx, "SmsObserver skipped: same date $date") } catch (_: Exception) {}
+                    return
+                }
+                lastProcessedDate = date
+                
+                try { LogStore.append(ctx, "SmsObserver received: from='$from' bodyLen=${body.length} date=$date") } catch (_: Exception) {}
 
                 val mirrorText = CodeMirrorHelper.buildMirrorText(body)
 
