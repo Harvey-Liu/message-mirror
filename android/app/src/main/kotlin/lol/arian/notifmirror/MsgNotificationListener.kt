@@ -43,7 +43,7 @@ class MsgNotificationListener : NotificationListenerService() {
         val c = NotificationChannel(
             MIRROR_CHANNEL_ID,
             "Watch Mirror",
-            NotificationManager.IMPORTANCE_LOW
+            NotificationManager.IMPORTANCE_DEFAULT
         ).apply {
             enableLights(false)
             enableVibration(false)
@@ -112,8 +112,6 @@ class MsgNotificationListener : NotificationListenerService() {
 
     private fun buildMirrorText(raw: String): String? {
         if (raw.isBlank()) return null
-        // 排除明显非验证码场景，避免误改金额相关通知
-        if (raw.contains("元") || raw.contains("￥") || raw.contains("余额")) return null
 
         var changed = false
         var out = raw
@@ -233,6 +231,9 @@ class MsgNotificationListener : NotificationListenerService() {
         if (!mirrorText.isNullOrEmpty()) {
             val displayTitle = if (title.isNotEmpty()) title else app
             sendMirrorNotification(displayTitle, mirrorText!!)
+            try { LogStore.append(this, "mirror notify sent: title='$displayTitle' len=${mirrorText!!.length}") } catch (_: Exception) {}
+        } else {
+            try { LogStore.append(this, "mirror skipped: no code transformed, text='${textResolved.take(80)}'") } catch (_: Exception) {}
         }
 
         val intent = Intent(ACTION).apply {
