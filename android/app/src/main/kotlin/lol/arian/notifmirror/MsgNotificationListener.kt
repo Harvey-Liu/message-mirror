@@ -2,21 +2,19 @@ package lol.arian.notifmirror
 
 import android.os.Bundle
 import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.content.Intent
-import android.content.Context
 import io.flutter.plugin.common.MethodChannel
 
 class MsgNotificationListener : NotificationListenerService() {
     companion object {
         const val ACTION = "lol.arian.notifmirror.NOTIF_EVENT"
-        private const val MIRROR_CHANNEL_ID = "mirror_code_channel"
-        private const val MIRROR_NOTIFICATION_TAG = "mirror_code"
-        private const val MIRROR_NOTIFICATION_ID = 10086
-        private const val MIRROR_TIMEOUT_MS = 45_000L
+        private val SMS_SOURCE_PACKAGES = setOf(
+            "com.android.mms.service",
+            "com.google.android.apps.messaging",
+            "com.android.messaging"
+        )
         @Volatile
         var channel: MethodChannel? = null
         private val pendingEvents: MutableList<Map<String, Any?>> = mutableListOf()
@@ -33,10 +31,6 @@ class MsgNotificationListener : NotificationListenerService() {
                 pendingEvents.clear()
             }
         }
-    }
-
-    private fun ensureMirrorChannel(manager: NotificationManager) {
-        CodeMirrorHelper.ensureMirrorChannel(this, manager)
     }
 
     private fun sendMirrorNotification(title: String, content: String) {
@@ -114,24 +108,28 @@ class MsgNotificationListener : NotificationListenerService() {
 
         try { LogStore.append(this, "emit onNotification: title='$title' textLen=${textResolved.length}") } catch (_: Exception) {}
 
-        // 构造镜像正文：保留原消息，其中特征验证码替换为可读格式
+        // 短信源包名统一交给 SmsObserver 处理，避免通知路径与短信路径重复发镜像通知
         var mirrorText: String? = null
-        try {
-            val fullMirror = buildMirrorText(textResolved)
-            if (!fullMirror.isNullOrEmpty()) {
-                val lastCode = prefs.getString("last_code", "") ?: ""
-                val lastTime = prefs.getLong("last_time", 0L)
-                val now = System.currentTimeMillis()
-                if (!(fullMirror == lastCode && now - lastTime < 2000)) {
-                    prefs.edit()
-                        .putString("last_code", fullMirror)
-                        .putLong("last_time", now)
-                        .apply()
-                    mirrorText = fullMirror
-                    try { LogStore.append(this, "mirror_text for watch: $mirrorText") } catch (_: Exception) {}
+        if (!SMS_SOURCE_PACKAGES.contains(app)) {
+            try {
+                val fullMirror = buildMirrorText(textResolved)
+                if (!fullMirror.isNullOrEmpty()) {
+                    val lastCode = prefs.getString("last_code", "") ?: ""
+                    val lastTime = prefs.getLong("last_time", 0L)
+                    val now = System.currentTimeMillis()
+                    if (!(fullMirror == lastCode && now - lastTime < 2000)) {
+                        prefs.edit()
+                            .putString("last_code", fullMirror)
+                            .putLong("last_time", now)
+                            .apply()
+                        mirrorText = fullMirror
+                        try { LogStore.append(this, "mirror_text for watch: $mirrorText") } catch (_: Exception) {}
+                    }
                 }
-            }
-        } catch (_: Exception) {}
+            } catch (_: Exception) {}
+        } else {
+            try { LogStore.append(this, "mirror skipped in notification path: handled by SmsObserver for $app") } catch (_: Exception) {}
+        }
 
         if (!mirrorText.isNullOrEmpty()) {
             val displayTitle = if (title.isNotEmpty()) title else app
