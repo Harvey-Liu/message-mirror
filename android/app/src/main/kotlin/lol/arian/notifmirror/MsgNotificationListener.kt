@@ -87,38 +87,6 @@ class MsgNotificationListener : NotificationListenerService() {
         }
     }
 
-    private fun extractVerifyCode(text: String): String? {
-
-        // 排除明显非验证码
-        if (text.contains("元") || text.contains("￥") || text.contains("余额")) return null
-
-        // 1. 关键词优先（最精准）
-        val keywordRegex = Regex(
-            "(?i)(code|验证码|otp|password|动态码|校验码)[^A-Za-z0-9]{0,10}([A-Za-z0-9]{4,10})"
-        )
-        val keywordMatch = keywordRegex.find(text)
-        if (keywordMatch != null) {
-            return keywordMatch.groupValues[2]
-        }
-
-        // 2. 纯数字（4~8位）但排除长数字（手机号/卡号）
-        val digitRegex = Regex("\\b\\d{4,8}\\b")
-        val digitMatch = digitRegex.find(text)
-        if (digitMatch != null) {
-            val value = digitMatch.value
-            if (value.length <= 8) return value
-        }
-
-        // 3. 字母+数字混合（更可靠）
-        val mixRegex = Regex("\\b(?=.*[A-Za-z])(?=.*\\d)[A-Za-z\\d]{6,10}\\b")
-        val mixMatch = mixRegex.find(text)
-        if (mixMatch != null) {
-            return mixMatch.value
-        }
-
-        return null
-    }
-
     private fun formatSafeCode(code: String): String {
         return when {
             // 纯数字
@@ -130,6 +98,50 @@ class MsgNotificationListener : NotificationListenerService() {
 
             else -> code
         }
+    }
+
+    private fun replaceCodeByRegex(text: String, regex: Regex): Pair<String, Boolean> {
+        var changed = false
+        val replaced = regex.replace(text) { m ->
+            val safe = formatSafeCode(m.value)
+            if (safe != m.value) changed = true
+            safe
+        }
+        return replaced to changed
+    }
+
+    private fun buildMirrorText(raw: String): String? {
+        if (raw.isBlank()) return null
+        // 排除明显非验证码场景，避免误改金额相关通知
+        if (raw.contains("元") || raw.contains("￥") || raw.contains("余额")) return null
+
+        var changed = false
+        var out = raw
+
+        // 1) 关键词 + 验证码片段
+        val keywordRegex = Regex(
+            "(?i)(code|验证码|otp|password|动态码|校验码)([^A-Za-z0-9]{0,10})([A-Za-z0-9]{4,10})"
+        )
+        out = keywordRegex.replace(out) { m ->
+            val code = m.groupValues[3]
+            val safe = formatSafeCode(code)
+            if (safe != code) changed = true
+            m.groupValues[1] + m.groupValues[2] + safe
+        }
+
+        // 2) 纯数字 4~8 位（如 123456 -> 12-34-56）
+        val digitRegex = Regex("\\b\\d{4,8}\\b")
+        val (afterDigit, digitChanged) = replaceCodeByRegex(out, digitRegex)
+        out = afterDigit
+        changed = changed || digitChanged
+
+        // 3) 字母+数字混合 6~10 位（如 A1B2C3 -> A 1 B 2 C 3）
+        val mixRegex = Regex("\\b(?=.*[A-Za-z])(?=.*\\d)[A-Za-z\\d]{6,10}\\b")
+        val (afterMix, mixChanged) = replaceCodeByRegex(out, mixRegex)
+        out = afterMix
+        changed = changed || mixChanged
+
+        return if (changed) out else null
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
@@ -199,20 +211,20 @@ class MsgNotificationListener : NotificationListenerService() {
 
         try { LogStore.append(this, "emit onNotification: title='$title' textLen=${textResolved.length}") } catch (_: Exception) {}
 
-        // 提取验证码：仅通过转发链路（广播 / Channel / ApiSender）附带 mirror_text，不在本机再 notify，避免第二条通知
+        // 构造镜像正文：保留原消息，其中特征验证码替换为可读格式
         var mirrorText: String? = null
         try {
-            val code = extractVerifyCode(textResolved)
-            if (code != null) {
+            val fullMirror = buildMirrorText(textResolved)
+            if (!fullMirror.isNullOrEmpty()) {
                 val lastCode = prefs.getString("last_code", "") ?: ""
                 val lastTime = prefs.getLong("last_time", 0L)
                 val now = System.currentTimeMillis()
-                if (!(code == lastCode && now - lastTime < 2000)) {
+                if (!(fullMirror == lastCode && now - lastTime < 2000)) {
                     prefs.edit()
-                        .putString("last_code", code)
+                        .putString("last_code", fullMirror)
                         .putLong("last_time", now)
                         .apply()
-                    mirrorText = formatSafeCode(code)
+                    mirrorText = fullMirror
                     try { LogStore.append(this, "mirror_text for watch: $mirrorText") } catch (_: Exception) {}
                 }
             }
